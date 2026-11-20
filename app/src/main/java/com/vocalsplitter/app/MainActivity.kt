@@ -36,7 +36,6 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -192,7 +191,9 @@ private fun App() {
         } else null
     }
     DisposableEffect(player) { onDispose { player?.release() } }
-    SideEffect {
+
+    // Give a newly created player the current slider values.
+    LaunchedEffect(player) {
         player?.vocalGain = vocalPct / 100f
         player?.instGain = instPct / 100f
     }
@@ -291,8 +292,14 @@ private fun App() {
                 SectionCard("2. Mix & download") {
                     Text(result.name, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-                    PercentSlider("Vocals", vocalPct) { vocalPct = it }
-                    PercentSlider("Instrument", instPct) { instPct = it }
+                    PercentSlider("Vocals", vocalPct) {
+                        vocalPct = it
+                        player.vocalGain = it / 100f
+                    }
+                    PercentSlider("Instrument", instPct) {
+                        instPct = it
+                        player.instGain = it / 100f
+                    }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Button(onClick = {
@@ -300,6 +307,8 @@ private fun App() {
                                 player.pause()
                                 playing = false
                             } else {
+                                player.vocalGain = vocalPct / 100f
+                                player.instGain = instPct / 100f
                                 player.play()
                                 playing = true
                             }
