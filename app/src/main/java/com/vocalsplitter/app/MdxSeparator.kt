@@ -11,11 +11,14 @@ import java.nio.FloatBuffer
 import kotlin.math.PI
 import kotlin.math.cos
 
+enum class Mode { BEST, FAST, SUPER }
+
 /**
  * MDX-Net (UVR-MDX-NET-Voc_FT) vocal separation.
- * Maximum quality: every chunk runs twice (normal + sign-flipped "denoise" pass) and is averaged.
+ * BEST: every chunk runs twice (normal + sign-flipped "denoise" pass) and is averaged.
+ * FAST / SUPER: single pass. SUPER also uses all CPU cores.
  */
-class MdxSeparator(modelPath: String) : AutoCloseable {
+class MdxSeparator(modelPath: String, threads: Int) : AutoCloseable {
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
     private val session: OrtSession
     private val inputName: String
@@ -45,7 +48,7 @@ class MdxSeparator(modelPath: String) : AutoCloseable {
 
     init {
         val opts = OrtSession.SessionOptions()
-        opts.setIntraOpNumThreads(Runtime.getRuntime().availableProcessors().coerceIn(2, 4))
+        opts.setIntraOpNumThreads(threads.coerceAtLeast(1))
         opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
         session = env.createSession(modelPath, opts)
         inputName = session.inputNames.iterator().next()
@@ -145,6 +148,7 @@ class MdxSeparator(modelPath: String) : AutoCloseable {
     fun separate(
         left: FloatArray,
         right: FloatArray,
+        denoise: Boolean,
         onProgress: (done: Int, total: Int) -> Unit,
         isActive: () -> Boolean,
     ): Array<FloatArray> {
@@ -157,7 +161,7 @@ class MdxSeparator(modelPath: String) : AutoCloseable {
         val chR = FloatArray(chunk)
         val spec = FloatArray(specSize)
         val predA = FloatArray(specSize)
-        val predB = FloatArray(specSize)
+        val predB = if (denoise) FloatArray(specSize) else FloatArray(0)
         val resL = FloatArray(chunk)
         val resR = FloatArray(chunk)
 
@@ -178,9 +182,11 @@ class MdxSeparator(modelPath: String) : AutoCloseable {
 
             computeSpec(chL, chR, spec)
             runModel(spec, predA)
-            for (i in 0 until specSize) spec[i] = -spec[i]
-            runModel(spec, predB)
-            for (i in 0 until specSize) predA[i] = 0.5f * (predA[i] - predB[i])
+            if (denoise) {
+                for (i in 0 until specSize) spec[i] = -spec[i]
+                runModel(spec, predB)
+                for (i in 0 until specSize) predA[i] = 0.5f * (predA[i] - predB[i])
+            }
             inverse(predA, resL, resR)
 
             val outStart = k * gen
