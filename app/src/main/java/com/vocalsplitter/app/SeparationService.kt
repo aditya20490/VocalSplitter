@@ -33,16 +33,18 @@ class SeparationService : Service() {
         const val ACTION_CANCEL = "com.vocalsplitter.app.CANCEL"
         private const val EXTRA_URI = "uri"
         private const val EXTRA_NAME = "name"
+        private const val EXTRA_MODE = "mode"
         private const val CHANNEL_ID = "separation"
         private const val NOTIF_ID = 1
         private const val DONE_ID = 2
         private const val MODEL_ASSET = "models/UVR-MDX-NET-Voc_FT.onnx"
 
-        fun start(ctx: Context, uri: Uri, name: String) {
+        fun start(ctx: Context, uri: Uri, name: String, mode: Mode) {
             val i = Intent(ctx, SeparationService::class.java)
                 .setAction(ACTION_START)
                 .putExtra(EXTRA_URI, uri.toString())
                 .putExtra(EXTRA_NAME, name)
+                .putExtra(EXTRA_MODE, mode.name)
             ContextCompat.startForegroundService(ctx, i)
         }
 
@@ -87,13 +89,18 @@ class SeparationService : Service() {
                 if (job?.isActive == true) return START_NOT_STICKY
                 val uri = Uri.parse(intent.getStringExtra(EXTRA_URI) ?: "")
                 val name = intent.getStringExtra(EXTRA_NAME) ?: "song"
-                launchJob(uri, name)
+                val mode = try {
+                    Mode.valueOf(intent.getStringExtra(EXTRA_MODE) ?: Mode.BEST.name)
+                } catch (_: Exception) {
+                    Mode.BEST
+                }
+                launchJob(uri, name, mode)
             }
         }
         return START_NOT_STICKY
     }
 
-    private fun launchJob(uri: Uri, name: String) {
+    private fun launchJob(uri: Uri, name: String, mode: Mode) {
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         wake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "VocalSplitter::separation").apply {
             setReferenceCounted(false)
@@ -102,7 +109,7 @@ class SeparationService : Service() {
         job = scope.launch {
             val active = { isActive }
             try {
-                process(uri, name, active)
+                process(uri, name, mode, active)
             } catch (e: CancellationException) {
                 SeparationState.clear(applicationContext)
                 SeparationState.ui.value = UiState(Phase.Idle, message = "Cancelled.")
@@ -128,7 +135,7 @@ class SeparationService : Service() {
         }
     }
 
-    private fun process(uri: Uri, name: String, active: () -> Boolean) {
+    private fun process(uri: Uri, name: String, mode: Mode, active: () -> Boolean) {
         val ctx = applicationContext
         SeparationState.clear(ctx)
         publish(0f, "Reading audio file…")
@@ -146,9 +153,13 @@ class SeparationService : Service() {
         publish(0.05f, "Loading AI model…")
         val modelPath = prepareModel(ctx)
 
-        MdxSeparator(modelPath).use { sep ->
+        val cores = Runtime.getRuntime().availableProcessors()
+        val threads = if (mode == Mode.SUPER) cores.coerceIn(2, 8) else cores.coerceIn(2, 4)
+        val denoise = mode == Mode.BEST
+
+        MdxSeparator(modelPath, threads).use { sep ->
             val t0 = SystemClock.elapsedRealtime()
-            val stems = sep.separate(left, right, { done, total ->
+            val stems = sep.separate(left, right, denoise, { done, total ->
                 val elapsed = (SystemClock.elapsedRealtime() - t0) / 1000.0
                 val eta = if (done > 0) (elapsed / done * (total - done)).toLong() else -1L
                 publish(
