@@ -27,7 +27,7 @@ class MixPlayer(
 
     private companion object {
         const val SR = 44100
-        const val BLOCK = 4096
+        const val BLOCK = 2048
     }
 
     @Synchronized
@@ -61,7 +61,7 @@ class MixPlayer(
             val minBuf = AudioTrack.getMinBufferSize(
                 SR, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_FLOAT
             )
-            val bufBytes = max(minBuf, BLOCK * 8 * 4)
+            val bufBytes = max(minBuf, BLOCK * 8 * 3)
             val t = AudioTrack.Builder()
                 .setAudioAttributes(
                     AudioAttributes.Builder()
@@ -90,6 +90,8 @@ class MixPlayer(
                     val iff = FloatArray(BLOCK * 2)
                     val out = FloatArray(BLOCK * 2)
                     var cursor = positionFrames
+                    var prevVg = vocalGain
+                    var prevIg = instGain
 
                     while (isPlaying) {
                         val s = seekTarget
@@ -113,13 +115,24 @@ class MixPlayer(
                         ByteBuffer.wrap(vb, 0, n * 8).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(vf, 0, n * 2)
                         ByteBuffer.wrap(ib, 0, n * 8).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(iff, 0, n * 2)
 
+                        // Read the live slider gains for this block and ramp smoothly (no clicks).
                         val vg = vocalGain
                         val ig = instGain
-                        for (j in 0 until n * 2) {
-                            var x = vf[j] * vg + iff[j] * ig
-                            if (x > 1f) x = 1f else if (x < -1f) x = -1f
-                            out[j] = x
+                        for (f in 0 until n) {
+                            val a = (f + 1).toFloat() / n
+                            val gv = prevVg + (vg - prevVg) * a
+                            val gi = prevIg + (ig - prevIg) * a
+                            val j = f * 2
+                            var l = vf[j] * gv + iff[j] * gi
+                            var r = vf[j + 1] * gv + iff[j + 1] * gi
+                            if (l > 1f) l = 1f else if (l < -1f) l = -1f
+                            if (r > 1f) r = 1f else if (r < -1f) r = -1f
+                            out[j] = l
+                            out[j + 1] = r
                         }
+                        prevVg = vg
+                        prevIg = ig
+
                         var w = 0
                         while (w < n * 2 && isPlaying) {
                             val r = t.write(out, w, n * 2 - w, AudioTrack.WRITE_BLOCKING)
