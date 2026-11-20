@@ -106,6 +106,18 @@ private fun fmtEta(sec: Long): String {
     return if (m >= 1) "About $m min left" else "Less than a minute left"
 }
 
+private fun modeLabel(m: Mode): String = when (m) {
+    Mode.BEST -> "Best"
+    Mode.FAST -> "Fast"
+    Mode.SUPER -> "Super fast"
+}
+
+private fun modeDescription(m: Mode): String = when (m) {
+    Mode.BEST -> "Best: slowest, cleanest separation (two passes)."
+    Mode.FAST -> "Fast: about half the time, slightly more leftover noise (one pass)."
+    Mode.SUPER -> "Super fast: one pass using every CPU core. Quickest, but the phone may get warm."
+}
+
 @Composable
 private fun SectionCard(title: String, content: @Composable ColumnScope.() -> Unit) {
     Card(
@@ -138,6 +150,7 @@ private fun App() {
 
     var pickedUri by remember { mutableStateOf<Uri?>(null) }
     var pickedName by remember { mutableStateOf("") }
+    var mode by remember { mutableStateOf(Mode.BEST) }
     var vocalPct by remember { mutableFloatStateOf(100f) }
     var instPct by remember { mutableFloatStateOf(100f) }
     var exporting by remember { mutableStateOf(false) }
@@ -155,7 +168,7 @@ private fun App() {
     }
 
     val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
-        pickedUri?.let { SeparationService.start(ctx, it, pickedName) }
+        pickedUri?.let { SeparationService.start(ctx, it, pickedName, mode) }
     }
 
     fun startJob() {
@@ -166,7 +179,7 @@ private fun App() {
         ) {
             notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            SeparationService.start(ctx, uri, pickedName)
+            SeparationService.start(ctx, uri, pickedName, mode)
         }
     }
 
@@ -208,7 +221,7 @@ private fun App() {
         ) {
             Text("Vocal Splitter", fontSize = 28.sp, fontWeight = FontWeight.Bold)
             Text(
-                "100% offline • maximum-quality AI separation",
+                "100% offline • AI vocal & instrument separation",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
@@ -219,13 +232,37 @@ private fun App() {
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(if (pickedUri == null) "Select audio file" else "Change file") }
                 if (pickedUri != null) Text(pickedName)
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (m in Mode.values()) {
+                        if (m == mode) {
+                            Button(
+                                onClick = {},
+                                enabled = !working,
+                                modifier = Modifier.weight(1f),
+                            ) { Text(modeLabel(m), maxLines = 1) }
+                        } else {
+                            OutlinedButton(
+                                onClick = { mode = m },
+                                enabled = !working,
+                                modifier = Modifier.weight(1f),
+                            ) { Text(modeLabel(m), maxLines = 1) }
+                        }
+                    }
+                }
+                Text(
+                    modeDescription(mode),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
                 Button(
                     onClick = { startJob() },
                     enabled = pickedUri != null && !working,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Separate (maximum quality)") }
+                ) { Text("Separate (${modeLabel(mode).lowercase()})") }
                 Text(
-                    "Long songs can take many minutes. Processing continues if you leave the app. " +
+                    "Processing continues if you leave the app. " +
                         "For best results set this app's battery usage to Unrestricted.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
